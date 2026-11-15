@@ -1,0 +1,246 @@
+openapi: 3.0.0
+info:
+  title: Project Documentation Management API
+  version: 2.1.0
+  description: API системы управления проектной документацией
+  contact:
+    name: Technical Support
+    email: tech-support@engineering-corp.com
+
+servers:
+  - url: https://api.pdm.engineering-corp.com/v2
+    description: Production environment
+
+paths:
+  /project-documents:
+    post:
+      summary: Регистрация нового проектного документа
+      description: Создает новую ревизию проектного документа с верификацией
+      operationId: registerProjectDocument
+      tags:
+        - Project Documents
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Ключ идемпотентности для предотвращения дублирования
+        - name: X-Project-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DocumentRegistrationRequest'
+      responses:
+        '202':
+          description: Документ принят в обработку
+          headers:
+            X-Processing-ID:
+              description: Идентификатор асинхронной обработки
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentRegistrationResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /documents/{documentId}/versions/compare:
+    post:
+      summary: Сравнение версий документа
+      operationId: compareDocumentVersions
+      tags:
+        - Version Control
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VersionComparisonRequest'
+      responses:
+        '200':
+          description: Результаты сравнения
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionComparisonResult'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+
+  /search/technical-docs:
+    post:
+      summary: Семантический поиск технической документации
+      operationId: searchTechnicalDocuments
+      tags:
+        - Search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TechnicalSearchRequest'
+      responses:
+        '200':
+          description: Результаты семантического поиска
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TechnicalSearchResult'
+
+components:
+  schemas:
+    DocumentRegistrationRequest:
+      type: object
+      required:
+        - documentCode
+        - documentType
+        - revision
+        - files
+      properties:
+        documentCode:
+          type: string
+          pattern: '^[A-Z]{3}-[A-Z0-9]{4}-\\d{3}$'
+          example: "MEC-PUMP-001"
+        documentType:
+          type: string
+          enum: [DRAWING, SPECIFICATION, CALCULATION, MANUAL, CERTIFICATE]
+        revision:
+          type: string
+          pattern: '^[A-Z0-9]{2}$'
+          example: "A1"
+        files:
+          type: array
+          items:
+            type: string
+            format: binary
+          minItems: 1
+          maxItems: 50
+        metadata:
+          type: object
+          properties:
+            projectPhase:
+              type: string
+            discipline:
+              type: string
+            confidentialityLevel:
+              type: string
+              enum: [PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED]
+
+    VersionComparisonRequest:
+      type: object
+      required:
+        - baseVersion
+        - targetVersion
+      properties:
+        baseVersion:
+          type: string
+          pattern: '^[A-Z0-9]{2}$'
+        targetVersion:
+          type: string
+          pattern: '^[A-Z0-9]{2}$'
+        comparisonType:
+          type: string
+          enum: [TEXTUAL, VISUAL, METADATA]
+          default: "TEXTUAL"
+
+    TechnicalSearchRequest:
+      type: object
+      properties:
+        semanticQuery:
+          type: string
+          description: "Естественно-языковый запрос"
+        technicalFilters:
+          type: object
+          properties:
+            discipline:
+              type: string
+            documentStatus:
+              type: string
+            lastModifiedRange:
+              type: object
+              properties:
+                from:
+                  type: string
+                  format: date-time
+                to:
+                  type: string
+                  format: date-time
+        similaritySearch:
+          type: object
+          properties:
+            referenceDocumentId:
+              type: string
+              format: uuid
+            similarityThreshold:
+              type: number
+              minimum: 0.1
+              maximum: 1.0
+
+  responses:
+    ValidationError:
+      description: Ошибка валидации входных данных
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorDetails'
+    RateLimitExceeded:
+      description: Превышена квота запросов
+      headers:
+        X-RateLimit-Limit:
+          description: Лимит запросов в период
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          description: Оставшееся количество запросов
+          schema:
+            type: integer
+        X-RateLimit-Reset:
+          description: Время сброса лимита
+          schema:
+            type: string
+            format: date-time
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorDetails'
+    ResourceNotFound:
+      description: Запрашиваемый ресурс не найден
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorDetails'
+
+    ErrorDetails:
+      type: object
+      properties:
+        errorCode:
+          type: string
+        message:
+          type: string
+        technicalDetails:
+          type: string
+        correlationId:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time
